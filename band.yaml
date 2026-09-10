@@ -1,0 +1,34 @@
+schemaVersion: "1"
+
+agent:
+  # Replace with the Agent UUID from app.band.ai/agents (agent settings page,
+  # bottom right). scripts/preflight.sh fails while this is still the placeholder.
+  id: 00000000-0000-0000-0000-000000000000
+  entrypoint: main.py
+
+# Production Band endpoints. For another deployment, override here or via
+# BAND_REST_URL / BAND_WS_URL, and grant the host to the sandbox:
+#   sbx policy allow network --sandbox band-repo-doctor <band-host>
+band:
+  restUrl: https://app.band.ai
+  wsUrl: wss://app.band.ai/api/v1/socket/websocket
+
+project:
+  path: .
+
+# Credential custody. proxy-managed means the real keys stay on the host — the
+# sandbox proxy holds them and injects them onto outbound requests, so this VM
+# only ever sees the string "proxy-managed". Provision them host-side:
+#   sbx secret set -g anthropic
+#   sbx secret set-custom -g --host '**.band.ai' \
+#     --env BAND_API_KEY --placeholder proxy-managed --value "$BAND_API_KEY"
+credentials:
+  source: proxy-managed
+
+# Sandbox-owned storage: deliberately outside the mounted workspace, so a Linux
+# venv and its caches never land in the host working tree.
+runtime:
+  environmentPath: /home/agent/.local/share/band-kit/venv
+  statePath: /home/agent/.local/share/band-kit/state
+  cachePath: /home/agent/.local/share/band-kit/cache
+  logPath: /home/agent/.local/share/band-kit/logs

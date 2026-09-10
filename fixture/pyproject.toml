@@ -1,0 +1,12 @@
+[project]
+name = "slugify-fixture"
+version = "0.1.0"
+description = "A deliberately broken sample project for the Repo Doctor demo."
+requires-python = ">=3.11"
+
+# Deliberately no dependencies and no build backend: this project is never
+# installed. The agent runs its tests in place with the agent environment's own
+# pytest, so `pythonpath` is what makes `from slugify import slugify` resolve.
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

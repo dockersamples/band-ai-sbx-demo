@@ -1,0 +1,23 @@
+# Credentials — never commit. The demo uses the proxy-managed tier and should not
+# need this directory at all; it exists only as the kit's less-secure fallback.
+.band/
+.env
+*.env
+!secrets.env.example
+
+# Environments and caches
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Logs and local scratch
+*.log
+.DS_Store
+
+# macOS screenshots dropped in here while capturing the demo
+Screenshot*.png
+Screen?Shot*.png
