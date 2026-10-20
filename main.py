@@ -3,7 +3,7 @@
 The band-python-kit launcher execs this file with the workspace's own locked venv
 interpreter. Band identity, endpoints, and credentials arrive as BAND_* environment
 variables; the real keys never enter the VM (the sandbox proxy holds them and the
-process only ever sees the ``proxy-managed`` sentinel).
+process only sees nonsecret placeholders).
 
 The agent is deliberately given four narrow tools instead of a shell. The sandbox is
 the real isolation boundary, but a small tool surface keeps the demo predictable and
@@ -14,6 +14,7 @@ being judged by.
 from __future__ import annotations
 
 import asyncio
+import logging
 import os
 import subprocess
 import sys
@@ -22,8 +23,10 @@ from pathlib import Path
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from band import Agent
-from band.adapters import PydanticAIAdapter
-from band.core.types import AdapterFeatures, Emit
+from band.adapters.pydantic_ai import PydanticAIAdapter, PydanticAIAdapterConfig
+from pydantic_ai.models.anthropic import AnthropicModel
+from pydantic_ai.providers.anthropic import AnthropicProvider
+from band.core.types import Emit
 from band.runtime.shutdown import run_with_graceful_shutdown
 
 # ── Sandboxed roots ───────────────────────────────────────────────────────────
@@ -207,14 +210,24 @@ class RepoDoctorSettings(BaseSettings):
 async def main() -> None:
     settings = RepoDoctorSettings()
 
+    provider_key = os.environ.get("ANTHROPIC_PROXY_KEY")
+    if not provider_key:
+        raise RuntimeError(
+            "ANTHROPIC_PROXY_KEY is missing. Store the sandbox-scoped custom "
+            "secret before creating the sandbox; see README.md."
+        )
+    if not MODEL.startswith("anthropic:"):
+        raise ValueError("This example expects REPO_DOCTOR_MODEL=anthropic:<model-id>")
+
     adapter = PydanticAIAdapter(
-        model=MODEL,
-        custom_section=SYSTEM_PROMPT,
+        PydanticAIAdapterConfig(custom_section=SYSTEM_PROMPT),
+        llm=AnthropicModel(
+            MODEL.removeprefix("anthropic:"),
+            provider=AnthropicProvider(api_key=provider_key),
+        ),
         additional_tools=[list_files, read_file, write_source, run_tests],
-        # Emit.EXECUTION publishes tool_call / tool_result events into the Band room.
-        # It is off by default; without it the audience sees only the agent's claims
-        # and not the actual test output it is claiming from.
-        features=AdapterFeatures(emit={Emit.EXECUTION}),
+        # Publish tool calls and results alongside the agent's explanation.
+        emit={Emit.TOOL_CALLS},
     )
 
     agent = Agent.create(
@@ -224,10 +237,10 @@ async def main() -> None:
         ws_url=settings.ws_url,
         rest_url=settings.rest_url,
     )
-    # The launcher execs into this process, so signals reach it directly and
-    # `sbx stop`'s SIGTERM shuts the agent down gracefully.
+    # Handle delivered signals; sandbox stop does not guarantee graceful teardown.
     await run_with_graceful_shutdown(agent)
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO)
     asyncio.run(main())

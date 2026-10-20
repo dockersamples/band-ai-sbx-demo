@@ -1,8 +1,7 @@
 schemaVersion: "1"
 
 agent:
-  # Replace with the Agent UUID from app.band.ai/agents (agent settings page,
-  # bottom right). scripts/preflight.sh fails while this is still the placeholder.
+  # Replace with your BAND remote agent UUID. Keep personal IDs out of commits.
   id: 00000000-0000-0000-0000-000000000000
   entrypoint: main.py
 
@@ -16,12 +15,9 @@ band:
 project:
   path: .
 
-# Credential custody. proxy-managed means the real keys stay on the host — the
-# sandbox proxy holds them and injects them onto outbound requests, so this VM
-# only ever sees the string "proxy-managed". Provision them host-side:
-#   sbx secret set -g anthropic
-#   sbx secret set-custom -g --host '**.band.ai' \
-#     --env BAND_API_KEY --placeholder proxy-managed --value "$BAND_API_KEY"
+# The host proxy substitutes real keys into outbound requests.
+# Store the BAND_API_KEY and ANTHROPIC_PROXY_KEY custom secrets before creation;
+# see README.md. This workspace contains only nonsecret placeholders.
 credentials:
   source: proxy-managed
 
