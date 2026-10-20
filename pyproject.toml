@@ -4,13 +4,21 @@ version = "0.1.0"
 description = "A Band remote agent that repairs a broken Python project inside a Docker Sandbox."
 requires-python = ">=3.11"
 dependencies = [
-  # Pinned for a reproducible demo. band-sdk >= 1.4.0 is required by the kit's
-  # proxy-managed credential tier: earlier releases only put the API key in the
-  # WebSocket URL query, which the sandbox proxy never rewrites, so the agent
-  # could not authenticate.
-  "band-sdk[pydantic-ai]==1.6.0",
+  # Match the published workload used in this example.
+  "band-sdk[pydantic-ai]==6.0.0",
   "pydantic-settings==2.15.0",
   # The agent runs the fixture's tests with its own interpreter, so pytest must
   # be part of the agent environment, not the fixture's.
   "pytest==9.1.1",
 ]
+
+[dependency-groups]
+dev = ["ruff==0.14.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100

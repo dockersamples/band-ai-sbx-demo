@@ -1,274 +1,257 @@
-# Repo Doctor — a Band agent inside a Docker Sandbox
+# Repo Doctor in a Docker Sandbox
 
-[![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
-[![Python](https://img.shields.io/badge/python-3.11%2B-blue.svg)](https://www.python.org/)
+Repo Doctor joins a BAND room and repairs a deliberately broken Python project when
+you mention it. The agent runs on your machine inside a Docker Sandbox, and its
+source edit appears in your local checkout.
 
-A single remote agent that lives in a Docker Sandbox microVM, joins a Band room, and
-repairs a deliberately broken Python project when a human asks it to.
+In the BAND room, you ask it to diagnose the failing tests, fix only the source,
+and report the result. Tool events show the test runs and file edit alongside its
+reply. The demo starts with **1 failed, 3 passed** and finishes with **4 passed**,
+with only `fixture/src/slugify.py` changed.
 
-From the Band UI you send one message. The agent — running on your Mac inside an
-isolated VM — inspects the project, runs its failing tests, edits one source file,
-reruns the tests, and reports back. The edit shows up in your working tree.
-
-![Repo Doctor reporting a successful repair in Band](band-repo-doctor-success.png)
+This example uses the unchanged published workload
+[`bandhq/band-python-kit:6.0.0`](https://hub.docker.com/r/bandhq/band-python-kit).
+There is no custom kit, mixin, or image build.
 
 ```text
-Laptop / Band UI
-        |
-        | messages and @mentions
-        v
-    Band Cloud  <---- outbound WebSocket ----  Repo Doctor
-                                                   |
-                                           Docker Sandbox VM
-                                                   |
-                                      mounted demo workspace
+Your browser --> BAND room <-- outbound WebSocket -- Repo Doctor
+                                                     |
+                                              Docker Sandbox
+                                                     |
+                                              mounted checkout
 ```
 
-There is no tunnel from the browser to the sandbox. The browser talks to Band; the
-sandbox dials out to Band. That is the whole point of the shape:
+## How the example runs
 
-- **Band** supplies identity, rooms, @mention routing, and the observable conversation.
-- **Docker Sandbox** supplies the isolated runtime, host-held credentials, and a
-  default-deny network policy.
-- The **repo-local Band kit** supplies the launcher policy and Claude credential
-  declaration while reusing Band's published image. Nothing is built locally.
+The kit reads `band.yaml`, which identifies the BAND agent and tells the launcher
+to run `main.py`. That Python file defines a Pydantic AI agent with four tools and
+chooses `anthropic:claude-opus-5` as its model.
 
----
+We chose Claude for this example. That is why this sandbox needs an Anthropic API
+key and permission to reach `api.anthropic.com`. The BAND kit supports Python
+agents using other models and frameworks; it does not choose Claude for you.
 
-## What you need
+## Run it yourself
 
-- Docker Desktop, running.
-- `sbx`, signed in.
-- A **Band External Agent** (one — no second agent, no platform agent, and no LLM key
-  in Band's own settings; that's only for Band-hosted agents).
-- An Anthropic API key stored host-side.
+### Prerequisites
 
-One-time host setup, if you don't have `sbx` yet:
+- A supported [Docker Sandboxes host](https://docs.docker.com/ai/sandboxes/), with
+  Docker running and `sbx` installed and signed in (`sbx login`). Tested on macOS
+  arm64 with SBX 0.48.0.
+- Git and a terminal with Bash for the optional helper scripts.
+- A BAND account with a registered remote agent. Save its agent UUID and API key.
+- An Anthropic API key with access to the configured model and API credits.
+  Claude Code OAuth alone does not authenticate this Pydantic AI example.
 
-```bash
-brew trust docker/tap
-brew install docker/tap/sbx
-sbx login
-```
+Python and `uv` on the host are only needed for development. The published kit
+supplies the Python runtime and installs the committed lockfile inside the sandbox.
 
----
-
-## Run it
-
-Clone the repository and enter the demo directory:
+### 1. Clone and set the BAND identity
 
 ```bash
 git clone https://github.com/shelajev/band-ai-sbx-demo.git
 cd band-ai-sbx-demo
 ```
 
-### 1. Register the agent in Band
-
-1. Go to <https://app.band.ai/agents> → **New Agent**. You want the **Connect Remote
-   Agent** form — "brings its own reasoning loop and authenticates via API key". Do
-   *not* follow "Or, create an internal agent": that's Band's hosted variant, which
-   needs an LLM key in Band's own settings and never touches the sandbox.
-2. Fill in:
-   - **Agent Name** — `Repo Doctor`. Avoid generic names like "Assistant".
-   - **Handle** — `repo-doctor`, giving `@<your-user>/repo-doctor`. **This is the
-     string you @mention**, not the agent name.
-   - **Description** — what it does, for the agent card. This is not the system
-     prompt; that lives in `main.py`.
-   - **Personal Registry Access** — uncheck. It lets the agent discover your other
-     agents; this one has no contacts capability enabled and doesn't need it.
-   - **List in public directory** — leave off.
-3. Click **Connect Remote Agent**, then **copy the API key from the popup
-   immediately.** It is shown once. If you lose it, delete the agent and remake it.
-4. Copy the **Agent UUID** from the agent's settings page (bottom right).
-
-### 2. Store both keys on the host
-
-The sandbox never receives either key. A trusted host-side proxy holds them and writes
-them onto outbound requests; the VM sees only a sentinel string.
-
-```bash
-# Model provider (built-in sbx service — you said you already have this one).
-sbx secret set -g anthropic
-
-# Band. `read -rs` keeps the key out of your shell history.
-read -rs -p "Band agent API key: " BAND_API_KEY && echo
-export BAND_API_KEY
-sbx secret set-custom -g --host '**.band.ai' \
-  --env BAND_API_KEY --placeholder proxy-managed --value "$BAND_API_KEY"
-unset BAND_API_KEY
-```
-
-The `**.band.ai` wildcard follows whichever Band deployment `band.yaml` points at.
-Note that `--value` is briefly visible in the process arguments — that is the
-documented path for this CLI; passing it from a variable at least keeps the literal
-out of your history file.
-
-### 3. Point the workspace at your agent
-
-Edit `band.yaml` and replace the placeholder with your Agent UUID:
+In [BAND](https://app.band.ai/agents), register a remote agent named Repo Doctor,
+with a handle such as `repo-doctor`. Save its API key when it is shown. Copy its
+agent UUID into `band.yaml`:
 
 ```yaml
 agent:
-  id: 00000000-0000-0000-0000-000000000000   # <- your Agent UUID
+  id: YOUR_AGENT_UUID
+  entrypoint: main.py
 ```
 
-Optional but recommended if you're writing this up — it makes the host-side diff a
-real `git diff` later:
+Keep the other settings unchanged. The agent runs in your sandbox; no model key
+needs to be entered into BAND's hosted-agent settings.
+
+### 2. Store the keys before creating the sandbox
+
+Run these commands on the host, from your checkout. Each prompts for a secret.
+Paste the BAND agent key into the first prompt, and the Anthropic API key into
+the second. Do not put keys in `band.yaml` or commit them.
 
 ```bash
-git init && git add -A && git commit -m "Repo Doctor demo, before the run"
+sbx secret set-custom \
+  --sandbox band-repo-doctor \
+  --host '**.band.ai' \
+  --env BAND_API_KEY \
+  --placeholder proxy-managed
+
+sbx secret set-custom \
+  --sandbox band-repo-doctor \
+  --host api.anthropic.com \
+  --env ANTHROPIC_PROXY_KEY \
+  --placeholder sk-ant-proxy-managed
 ```
 
-### 4. Create the sandbox
+The host proxy holds the real keys and substitutes them into outbound request
+headers. Inside the sandbox, the variables contain only the placeholders above.
+The example reads `ANTHROPIC_PROXY_KEY` and passes it explicitly to the Anthropic
+provider. Both secrets are scoped to `band-repo-doctor`, leaving any global Claude
+OAuth configuration unchanged.
+
+Use a new sandbox name if `band-repo-doctor` already belongs to another task.
+Substitute that name in every credential, create, policy, and run command below.
+Stop any previous runtime using the same BAND agent identity before starting this
+one, so two agents do not consume the same room messages.
+
+### 3. Create and start
+
+From the repository root:
 
 ```bash
-./scripts/create.sh
+sbx create --name band-repo-doctor \
+  docker.io/bandhq/band-python-kit:6.0.0 "$PWD"
+
+sbx policy allow network --sandbox band-repo-doctor api.anthropic.com
+
+sbx run --name band-repo-doctor
 ```
 
-This runs preflight and creates the sandbox from the repo-local, Claude-specific kit.
-The kit grants `api.anthropic.com` and exposes `ANTHROPIC_API_KEY=proxy-managed`; the
-real key stays in the host proxy. The agent launches headlessly and connects to Band
-on its own.
+The kit already permits BAND Cloud and the Python package hosts. The additional
+rule permits this example's model endpoint. Existing host or organization policy
+also applies; inspect it with `sbx policy ls band-repo-doctor`.
 
-Watch it come up:
+`sbx create` prepares the sandbox. `sbx run` installs the locked workspace
+dependencies and launches `main.py`. Keep that terminal open for the agent's
+lifetime. The logs should show `Connected to platform` and the agent joining its
+BAND rooms. A created sandbox alone does not establish a running agent.
+
+For a terminal session you can detach from, use tmux instead of the last command:
 
 ```bash
-sbx exec band-repo-doctor tail -n 50 -f /var/log/sbx-kit-startup.log
+tmux new-session -s band-repo-doctor 'sbx run --name band-repo-doctor'
 ```
 
-You're looking for the locked dependency sync followed by the agent connecting.
+Detach with Ctrl-b, then d. Reattach with `tmux attach -t band-repo-doctor`.
+Use exactly one `sbx run` session for this agent.
 
-### 5. Drive it from Band
+Optional: `bash scripts/create.sh` performs the create and policy commands after
+local prerequisite checks. It refuses an existing sandbox and prints the run
+command. For another name, use `SBX_SANDBOX=my-demo bash scripts/create.sh` after
+storing both secrets under that name.
 
-In the Band UI: **Chats** → **+** to create a room → **+** in the participants panel →
-add your agent. Then send:
+### 4. Ask Repo Doctor to repair the fixture
+
+Add the remote agent to a BAND room and mention its actual handle:
 
 ```text
 @<your-user>/repo-doctor The project in your workspace has a failing test.
-Diagnose it, fix only the source code, run the full test suite, and report
-what changed.
+Diagnose it, fix only the source code, run the full test suite,
+and report what changed.
 ```
 
-(Band's autocomplete will fill the handle once you type `@`.)
+The expected baseline is **1 failed, 3 passed**: `slugify("hello   world")` produces
+`hello---world`. The agent should repair `fixture/src/slugify.py`, rerun the tests,
+and report **4 passed**. Tool-call events are enabled so you can inspect the real
+test output in the room.
 
-Expected sequence in the room: it acknowledges, lists and reads the fixture, runs the
-tests and hits the intended failure (`1 failed, 3 passed`), edits
-`fixture/src/slugify.py`, reruns (`4 passed`), and summarises the cause and the fix.
-Tool calls and their real output appear as execution events, so the audience can tell
-the agent's claims apart from what actually happened.
-
-### 6. Collect the evidence
+In another host terminal, from this checkout:
 
 ```bash
-./scripts/verify.sh
+git diff -- fixture/src/slugify.py
+bash scripts/verify.sh
 ```
 
-The verifier prints the report live and also writes the complete output to
-`repo-doctor-verification.log` (ignored by Git). Override the destination with
-`VERIFY_OUTPUT=/path/to/report.log ./scripts/verify.sh`.
+Verification checks credential placeholders, the running agent's UID, network
+logs, and the fixture tests inside the sandbox. It exits nonzero on a failed
+check, including an unrepaired fixture. It does not post messages to BAND.
+Use `SBX_SANDBOX=my-demo bash scripts/verify.sh` if you chose another name.
 
-Prints the startup log, asserts the VM holds `proxy-managed` rather than your real
-key, shows the agent process running as `uid=1000 (agent)`, dumps the network policy
-log, shows the host-side diff, and reruns the suite from the host.
+## Repeat, restart, or stop
 
-### 7. Reset and prove it repeats
+Wait for the current BAND turn to finish, then restore the intentional bug:
 
 ```bash
-./scripts/reset-fixture.sh
-sbx stop band-repo-doctor && sbx run --name band-repo-doctor
+bash scripts/reset-fixture.sh
 ```
 
-`reset-fixture.sh` restores only the broken source — it never touches credentials or
-`band.yaml`. After the restart, a follow-up question in the same room also demonstrates
-that the agent reconnects:
+Send another repair request, preferably in a fresh room for a clean demonstration.
+The reset affects only the fixture source and its caches. Never reset it while the
+agent is working. See [DEMO.md](DEMO.md) for screenshot and evidence guidance.
 
-```text
-@<your-user>/repo-doctor What behaviour did your fix preserve?
+Stop the sandbox with `sbx stop band-repo-doctor`. Restart it with
+`sbx run --name band-repo-doctor` in a terminal. If using tmux, close any old owner
+session before starting a new one. Do not assume stop provides graceful teardown.
+
+Removing the sandbox with `sbx rm band-repo-doctor` also removes its scoped
+secrets. Before recreating, store both keys again. Keep your keys in your own
+secure credential store; SBX is not a way to recover a one-time BAND key.
+
+## How the example is bounded
+
+The four tools list files under `fixture/`, read fixture files, write existing
+files under `fixture/src/`, and execute the fixed pytest command. The writing tool
+cannot edit the test files or agent configuration. Paths that resolve outside the
+permitted root are rejected. The agent has no general shell tool.
+
+The microVM is the isolation boundary. The narrower tool set makes this demo
+predictable; it is not a general-purpose filesystem security mechanism. The host
+checkout is deliberately writable and receives the agent's changes.
+
+## Develop and test
+
+Install [uv](https://docs.astral.sh/uv/getting-started/installation/), then run:
+
+```bash
+uv sync --locked
+uv run --locked pytest
+uv run --locked ruff check .
+uv run --locked ruff format --check .
 ```
 
----
+The root test suite validates the tool boundaries, the SDK adapter setup, and the
+fixture's failure-to-success transition in a temporary copy. It needs no API key,
+BAND account, or sandbox. The separate `fixture/tests/` suite is intentionally
+failing in a fresh checkout; do not fix its source to make CI green.
 
-## What's in here
+Update both `pyproject.toml` and `uv.lock` for dependency changes (`uv lock`), then
+restart the sandbox to sync them. To select another Anthropic model supported by
+your account, restart the agent with:
 
-| Path | What it is |
-|---|---|
-| `main.py` | The agent. `PydanticAIAdapter` plus four narrow tools. |
-| `band.yaml` | Agent identity, endpoints, credential tier, runtime paths. Strictly validated. |
-| `band-kit-fix/spec.yaml` | Claude-specific kit policy: Band/PyPI/Anthropic egress and Anthropic proxy credential binding. |
-| `pyproject.toml` + `uv.lock` | A plain `uv` project. The committed lock is required — the launcher never resolves at startup. |
-| `fixture/` | The deliberately broken `slugify` project. Its tests are the specification. |
-| `scripts/` | `preflight.sh`, `create.sh`, `verify.sh`, `reset-fixture.sh`. |
-| `DEMO.md` | Screenshot-by-screenshot capture guide for the writeup. |
+```bash
+sbx run --name band-repo-doctor \
+  --env REPO_DOCTOR_MODEL=anthropic:YOUR_MODEL_ID
+```
 
-### The agent's tools
-
-The model gets four tools and **no shell**:
-
-| Tool | Contract |
-|---|---|
-| `list_files()` | Lists files under `fixture/`, minus caches and `.git`. |
-| `read_file(path)` | Reads a UTF-8 file under `fixture/`. |
-| `write_source(path, content)` | Writes only under `fixture/src/`, and only over an existing file. |
-| `run_tests()` | Runs the fixture's pytest suite, returns exit code plus bounded output. |
-
-Every path is resolved and checked to still be under its permitted root, so absolute
-paths, `..` traversal, and symlink escapes are all refused. Output is capped at 20 KB.
-
-The sandbox is the real isolation boundary — the tool narrowing is about making the
-demo *predictable*. The agent cannot edit the tests it is judged by, and it cannot
-touch its own configuration, so "the tests pass" means something.
-
-### Why these specific settings
-
-- **`anthropic:claude-opus-5`** — Anthropic is recommended over OpenAI for multi-turn
-  tool use here; pydantic-ai's OpenAI path has a known `content: null` failure on
-  complex tool sequences. Override with `REPO_DOCTOR_MODEL` if you want to compare.
-- **`AdapterFeatures(emit={Emit.EXECUTION})`** — off by default. Without it the room
-  shows only prose, not the tool calls and real test output. This is the line that
-  makes the demo evidentiary rather than anecdotal.
-- **`credentials.source: proxy-managed`** — the default and the secure tier. The
-  alternative (`.band/secrets.env`) puts plaintext keys in both your working tree and
-  the VM.
-
----
+Using a different provider also requires changing the Python provider wiring,
+credentials, and network rule. The example's model override selects Anthropic
+models only.
 
 ## Troubleshooting
 
-| Symptom | Cause |
-|---|---|
-| `Set the ANTHROPIC_API_KEY environment variable` in the log | The provider secret wasn't provisioned host-side. Run `sbx secret set -g anthropic` and recreate. |
-| Agent never connects; log mentions the WebSocket | Check `sbx policy log band-repo-doctor` for a blocked Band host. |
-| A blocked request to some other host | Grant that exact host: `sbx policy allow network --sandbox band-repo-doctor <host>`. Don't widen the policy. |
-| `ps: not found` from a hand-run command | Correct — the kit image is `python:slim` and has no `procps`. `verify.sh` reads `/proc` instead. |
-| Dependency change had no effect | Run `uv lock`, then restart the sandbox. The launcher re-syncs on start. |
-| Changed `band.yaml`'s credential tier or the kit tag, nothing happened | Kit config applies only at creation. `sbx rm band-repo-doctor` and re-create. |
-| Startup errors naming a phase (`[config]`, `[sync]`, …) | Read the full log: `sbx exec band-repo-doctor cat /var/log/sbx-kit-startup.log`. Launcher errors never contain secret values. |
+| Symptom | Check |
+| --- | --- |
+| `ANTHROPIC_PROXY_KEY` missing | Store the custom secret before creation. A sandbox created earlier may lack its environment variable; preserve your keys before recreating. |
+| BAND authentication fails | Confirm the UUID matches the BAND key and the custom secret targets the configured BAND host. |
+| Claude returns 401, 403, or a billing/model error | Check your Anthropic API key, API credits, and access to the configured model. Claude Code OAuth is a separate setup. |
+| Network request blocked | Inspect `sbx policy log band-repo-doctor`; allow the required hostname. Organization policy may require administrator action. |
+| Sandbox exists but agent is offline | Keep `sbx run --name band-repo-doctor` active in a terminal or tmux. |
+| Locked dependency sync fails | Run `uv lock` after dependency edits, commit the lockfile, and restart. |
+| No repair needed | Wait for the agent to finish, then run `bash scripts/reset-fixture.sh`. |
 
-Do **not** set `HTTP_PROXY` / `HTTPS_PROXY` / `NO_PROXY` yourself — the sandbox runtime
-manages them, and overriding them bypasses the network policy.
+Do not override sandbox-managed proxy variables. Launcher diagnostics are in the
+run terminal and `/home/agent/.local/share/band-kit/logs/launcher.log`. The old
+`/var/log/sbx-kit-startup.log` path does not contain this v3 agent's runtime output.
 
----
+## Validated configuration
 
-## Pinned versions
-
-| Component | Version |
-|---|---|
-| Band kit | Repo-local Claude-specific wrapper in `band-kit-fix/spec.yaml` |
-| Kit image | `bandhq/band-python-kit-image:1.6.0@sha256:4e67d3282ede…`, multi-arch amd64 + arm64 |
-| `band-sdk` | 1.6.0, with the `pydantic-ai` extra |
+| Component | Tested value |
+| --- | --- |
+| Host | macOS arm64 |
+| SBX | 0.48.0 |
+| Published BAND workload | `docker.io/bandhq/band-python-kit:6.0.0` (kit schema v3) |
+| Workload digest | `sha256:5976165107628bc7ad9512bfec5c6e72c1a60e29511132453698a54114f279a8` |
+| BAND SDK | 6.0.0 |
 | Model | `anthropic:claude-opus-5` |
-| Python | 3.12 (from the kit image) |
 
-A `1.6.0-r1` tag also exists — a CVE rebuild of the same release. This demo pins plain
-`1.6.0` for a frozen artifact; note whichever you actually ran.
-
-The kit's README documents testing against `sbx` 0.35.0. Record your real `sbx version`
-alongside the run — if the published kit fails to create or launch, save the exact
-version, the create output, `/var/log/sbx-kit-startup.log`, and `sbx policy log`, and
-report that rather than patching or locally rebuilding the kit.
-
----
+On October 20, 2026, this configuration authenticated through the host proxy,
+received a BAND-room request, edited only the fixture source, emitted tool events,
+posted its reply, and completed the turn. An independent test run confirmed four
+passing tests. The implementation was tested with the stock published workload.
 
 ## License
 
-Licensed under the [Apache License 2.0](LICENSE).
+[Apache License 2.0](LICENSE).
