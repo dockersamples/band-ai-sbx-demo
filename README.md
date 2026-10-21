@@ -49,7 +49,7 @@ supplies the Python runtime and installs the committed lockfile inside the sandb
 ### 1. Clone and set the BAND identity
 
 ```bash
-git clone https://github.com/shelajev/band-ai-sbx-demo.git
+git clone https://github.com/dockersamples/band-ai-sbx-demo.git
 cd band-ai-sbx-demo
 ```
 
